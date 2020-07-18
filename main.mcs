@@ -1,0 +1,218 @@
+require"class.Model"
+require"class.Monte_carlo"
+
+q={1.50690,5.70700}
+
+q_aver={}       --c存放需求均值
+p_ary={}        --存放各时期需求对应的概率
+x={}            --存放目标函数的系数
+best_obj=0      
+
+k=2
+t=1
+T=6
+
+--stand_dev={0.22834,0.26}   --T为4是 答案较好
+--u={0.326,0.59}            --T为4是 答案较好
+stand_dev={0.12834,0.26}    --T为5是 答案较好
+u={0.182,0.20}              --T为5是 答案较好
+
+--stand_dev={0.12834,0.26}    --T为6是 答案较好
+--u={0.0526,0.532}             --T为6是 答案较好
+
+--stand_dev={0.04834,0.16}     --T为7 答案较好
+--u={0.062,0.19}               --T为8 答案较好
+
+p=1                                     --递归函数中保存各个状态的概率，初始概率为1
+c_init={0.3,0.2}
+c={}
+
+for i=1,T do
+    table.insert(c,c_init[1])
+    table.insert(c,c_init[2])
+end
+
+p_1={}
+p_1_init={2,3.5,2,1}
+for i=1,k*T*2 do
+    p_1[i]=0
+end
+for i=1,4 do
+    table.insert(p_1,p_1_init[i])
+end
+
+p_b={}
+p_b_init={5,6}
+for i=1,k*T do
+    p_b[i]=0
+end
+for i=1,T do
+    table.insert(p_b,p_b_init[1])
+    table.insert(p_b,p_b_init[2])
+end
+for i=1,k*T do
+    q_aver[i]=0
+end
+
+for i=1,k do
+    q_aver[i]=q[i]
+    p_ary[i]=1
+end
+
+function set_obj()
+    for i=1,T*k do
+        x[i]=-c[i]
+    end
+
+    for i=k*T+1,k*T*2 do
+        x[i]=p_b[i]
+    end
+
+    for i=k*T*2+1,k*T*2+4 do
+        x[i]=-p_1[i]
+    end
+end
+
+function set_domain_of_definition()    --设置定义域
+    for i=1,k*T do
+        SetInteger(lp,i)
+    end
+    for i=k*T+1,k*T+4+k*T do
+        local w={}
+        for j=1,k*T+4+k*T do
+            if i==j then
+                w[j]=1
+            else
+                w[j]=0
+            end
+        end
+        AddConstraint(lp,w,">=",0)
+    end
+end
+
+function write_content(fileName,content)
+
+    local f=assert(io.open(fileName,"a"))
+    f:write(content)
+    f:close()
+end
+
+function recursion(t,q,p)
+        if t<T then
+            local q_temp={}
+            for i=k*(t-1)+1,k*t do
+                table.insert(q_temp,q[i])
+            end
+            local a=CPr_distribution:new(q_temp,k,t,T,stand_dev,u,p)
+            local c=a:p_of_marg()
+            local b=a:p_of_jonit()
+            for i=1,b.num do
+                for j=1,k do
+                end
+                if b.t>1 then
+                    for j= k*(b.t-1)+1, k*T do
+                        q[j]=nil
+                        p_ary[j]=nil
+                    end
+                end
+                -------------------------求需求期望----------------------------
+                q_aver[k*(b.t-1)+1]=q_aver[k*(b.t-1)+1]+b.p_jon[i]*b.q_new[i][1]
+                q_aver[k*b.t]=q_aver[k*b.t]+b.p_jon[i]*b.q_new[i][2]
+                -------------------------求需求期望概率----------------------------
+                p_ary[k*(b.t-1)+1]=b.p_jon[i]
+                p_ary[k*b.t]=b.p_jon[i]
+                for ix=1,k do
+                    table.insert(q,b.q_new[i][ix])
+                end
+                t=b.t
+                p=b.p_jon[i]
+                
+                if t==T then
+                
+                    lp=CreateLP()
+                    SetObjFunction(lp,x,"max")  
+                    local a=Model:new(k,t,q)
+                    local b=a:set_constrains()
+                    local c=a:set_intermediate_variable()
+                    set_domain_of_definition()
+                    SolveLP(lp)
+                    best_obj=best_obj+p*GetObjective(lp)
+                    
+                    --print(table.concat(q,','))
+                    --print(table.concat(p_ary,','))
+                    --print('best is  ',GetObjective(lp)," p is ",p)
+                    
+                    local var = {GetVariables(lp)}
+                    
+                    for i=1,k*T do
+                        write_content("data.csv",q[i])
+                        write_content("data.csv",",")
+                    end
+                    write_content("data.csv","\n")
+                    for i=1,k*T do
+                        write_content("data.csv",p_ary[i])
+                        write_content("data.csv",",")
+                    end
+                    write_content("data.csv","\n")
+                    for i=1,k*T do
+                        write_content("data.csv",var[i])
+                        write_content("data.csv",",")
+                    end
+                    --write_content("data.csv",",")
+                    write_content("data.csv",GetObjective(lp))
+                    write_content("data.csv",",")
+                    write_content("data.csv",p)
+                    write_content("data.csv","\n")
+                    write_content("data.csv","\n")
+                    --print(table.concat(var,','))
+                    
+                end
+                recursion(t,q,p)
+            end
+        end
+        
+end
+
+function main()
+    set_obj()
+    
+    recursion(t,q,p)
+    lp=CreateLP()
+    SetObjFunction(lp,x,"max")
+    --q_aver={1.5069,5.707,1.85500036,4.9888,2.2084553178654,4.3530738382}
+    local a=Model:new(k,T,q_aver)
+    local b=a:set_constrains()
+    local c=a:set_intermediate_variable()
+    
+    set_domain_of_definition()
+    
+    SolveLP(lp)
+    local var= {GetVariables(lp)}
+    
+    for i=1,k*T do
+        write_content("data.csv",q_aver[i])
+        write_content("data.csv",",")
+    end
+    write_content("data.csv","\n")
+    for i=1,k*T do
+        write_content("data.csv",var[i])
+        write_content("data.csv",",")
+    end
+    write_content("data.csv",GetObjective(lp))
+    
+    for i=1,k*T do
+        --print(q_aver[i])
+    end
+    --WriteLP (lp,'lp3.lp')
+    for i=1,k*T do
+        print(q_aver[i])
+    end
+    print('best is aver  ',GetObjective(lp))
+    
+    print(table.concat(var,','))
+    print("best_obj is ", best_obj)
+end
+
+main()
+
+
